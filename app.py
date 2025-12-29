@@ -42,6 +42,7 @@ def capturar_loja(tarefa):
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1280,720")
+    # Bloqueio de imagens para performance
     prefs = {"profile.managed_default_content_settings.images": 2}
     opts.add_experimental_option("prefs", prefs)
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
@@ -53,38 +54,53 @@ def capturar_loja(tarefa):
     
     try:
         driver.get(url)
-        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, seletor)))
-        time.sleep(2)
-        elementos = driver.find_elements(By.CSS_SELECTOR, seletor)
+        
+        # Ajuste específico para Surya: Espera mais tempo
+        tempo_espera = 20 if "surya" in url.lower() else 15
+        
+        # Seletor dinâmico para Surya: busca qualquer classe que contenha o termo do preço
+        if "surya" in url.lower():
+            seletor_css = "p[class*='priceProduct-productPrice']"
+        else:
+            seletor_css = seletor
+
+        WebDriverWait(driver, tempo_espera).until(EC.presence_of_element_located((By.CSS_SELECTOR, seletor_css)))
+        time.sleep(3) # Pausa para renderização dos centavos
+        
+        elementos = driver.find_elements(By.CSS_SELECTOR, seletor_css)
         precos_encontrados = []
+        
         for el in elementos:
-            # Limpeza do texto para capturar o preço corretamente
-            texto = el.text.replace(' ', '').replace('\xa0', '').replace('\n', '')
+            # Limpeza agressiva para capturar spans fatiados
+            texto = el.text.replace(' ', '').replace('\xa0', '').replace('\n', '').replace('\r', '')
             matches = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
             for m in matches:
                 val = float(m.replace('.', '').replace(',', '.'))
-                if val > 0:
+                if val > 1.0: # Evita capturar R$ 0,00 ou erros
                     precos_encontrados.append(val)
         
         preco_final = min(precos_encontrados) if precos_encontrados else 0.0
+        
+        # Verificação de estoque
         html = driver.page_source.lower()
         if "vidafarma" in url.lower():
             est = "✅" if "comprar" in html or "adicionar" in html else "❌"
         else:
-            esgotado = any(t in html for t in ['esgotado', 'indisponível', 'avise-me', 'fora de estoque', 'indisponivel'])
-            est = "❌" if esgotado else "✅"
+            termos_esgotado = ['esgotado', 'indisponível', 'avise-me', 'fora de estoque', 'indisponivel']
+            est = "❌" if any(t in html for t in termos_esgotado) else "✅"
+            
         return {"loja": loja, "valor": f"R$ {preco_final:,.2f} {est}".replace('.',',')}
-    except:
+    except Exception as e:
         return {"loja": loja, "valor": "Erro ❌"}
     finally:
         driver.quit()
 
-# --- DEFINIÇÃO DA INTERFACE ---
+# --- INTERFACE ---
 aba_dash, aba_config = st.tabs(["📊 Dashboard de Preços", "➕ Configurações"])
 
 with aba_config:
-    st.subheader("Cadastro de Itens")
-    with st.form("add_form", clear_on_submit=True):
+    st.subheader("Configuração de Itens")
+    with st.form("form_add", clear_on_submit=True):
         nome = st.text_input("Nome do Produto")
         c1, c2 = st.columns(2)
         v = c1.text_input("Link Vidafarma")
@@ -97,7 +113,7 @@ with aba_config:
                 l.append({"nome": nome, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
                 salvar_json(DB_FILE, l)
                 st.rerun()
-    
+
     prods = carregar_json(DB_FILE)
     for i, p in enumerate(prods):
         col1, col2 = st.columns([5,1])
@@ -109,26 +125,28 @@ with aba_config:
 
 with aba_dash:
     historico = carregar_json(HIST_FILE)
-    
-    if st.button("🚀 INICIAR VARREDURA"):
+    if st.button("🚀 ATUALIZAR TODOS OS PREÇOS"):
         lista_prods = carregar_json(DB_FILE)
         if not lista_prods:
             st.error("Nenhum produto cadastrado.")
         else:
             tarefas = []
             for p in lista_prods:
-                tarefas.append({"id": p['nome'], "loja": "Vidafarma (MEU)", "url": p['vidafarma'], "seletor": ".customProduct__price"})
+                tarefas.append({"id": p['nome'], "loja": "Vidafarma", "url": p['vidafarma'], "seletor": ".customProduct__price"})
                 tarefas.append({"id": p['nome'], "loja": "Cremer", "url": p['cremer'], "seletor": ".price"})
                 tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
                 tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
 
-            with st.status("Robôs trabalhando em paralelo...", expanded=True):
+            with st.status("Varredura em andamento...", expanded=True):
+                # Usamos 4 workers para velocidade máxima
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     res_brutos = list(executor.map(capturar_loja, tarefas))
+                
                 matriz = {}
                 for i, t in enumerate(tarefas):
                     if t['id'] not in matriz: matriz[t['id']] = {"Produto": t['id']}
                     matriz[t['id']][t['loja']] = res_brutos[i]['valor']
+                
                 final_dados = list(matriz.values())
                 salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": final_dados}])
                 st.rerun()
@@ -136,6 +154,7 @@ with aba_dash:
     if historico:
         df = pd.DataFrame(historico[0]['dados'])
         
+        # --- LÓGICA DE CÁLCULO DASHBOARD ---
         def extrair_v(texto):
             try:
                 num = re.search(r'R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', str(texto))
@@ -145,8 +164,8 @@ with aba_dash:
         total = len(df)
         ganhando, perdendo, ruptura = 0, 0, 0
         for _, row in df.iterrows():
-            meu_p = extrair_v(row['Vidafarma (MEU)'])
-            if "❌" in str(row['Vidafarma (MEU)']): ruptura += 1
+            meu_p = extrair_v(row['Vidafarma'])
+            if "❌" in str(row['Vidafarma']): ruptura += 1
             concs = [extrair_v(row[c]) for c in ['Cremer', 'Speed', 'Surya'] if extrair_v(row[c])]
             if meu_p and concs:
                 if meu_p < min(concs): ganhando += 1
@@ -178,5 +197,3 @@ with aba_dash:
         st.divider()
         st.info(f"Última atualização: {historico[0]['data']}")
         st.dataframe(df.set_index("Produto"), use_container_width=True)
-    else:
-        st.warning("Cadastre seus produtos e clique em Iniciar para gerar o primeiro relatório.")
