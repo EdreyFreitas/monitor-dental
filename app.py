@@ -14,12 +14,13 @@ import os
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# 1. CONFIGURAÇÃO DA PÁGINA (Deve ser o primeiro comando Streamlit)
 st.set_page_config(page_title="Monitor Dental Flash", page_icon="⚡", layout="wide")
 
 DB_FILE = "produtos.json"
 HIST_FILE = "historico.json"
 
+# 2. FUNÇÕES DE SUPORTE
 def carregar_json(arquivo):
     if os.path.exists(arquivo):
         try:
@@ -30,7 +31,6 @@ def carregar_json(arquivo):
 def salvar_json(arquivo, dados):
     with open(arquivo, "w") as f: json.dump(dados, f, indent=4)
 
-# --- MOTOR DE SCRAPING ---
 def capturar_loja(tarefa):
     url = tarefa['url']
     seletor = tarefa['seletor']
@@ -78,9 +78,10 @@ def capturar_loja(tarefa):
     finally:
         driver.quit()
 
-# --- INTERFACE ---
+# 3. DEFINIÇÃO DAS ABAS (Isso resolve o erro NameError)
 aba_dash, aba_config = st.tabs(["📊 Dashboard de Preços", "➕ Configurações"])
 
+# 4. CONTEÚDO DA ABA DE CONFIGURAÇÕES
 with aba_config:
     st.subheader("Cadastro de Itens")
     with st.form("add_form", clear_on_submit=True):
@@ -106,6 +107,7 @@ with aba_config:
             salvar_json(DB_FILE, prods)
             st.rerun()
 
+# 5. CONTEÚDO DA ABA DASHBOARD
 with aba_dash:
     historico = carregar_json(HIST_FILE)
     
@@ -121,7 +123,7 @@ with aba_dash:
                 tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
                 tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
 
-            with st.status("Robôs na nuvem trabalhando...", expanded=True):
+            with st.status("Robôs trabalhando...", expanded=True):
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     res_brutos = list(executor.map(capturar_loja, tarefas))
                 matriz = {}
