@@ -1,4 +1,4 @@
 streamlit
-selenium
-webdriver-manager
+playwright
+pytest-playwright
 pandas
