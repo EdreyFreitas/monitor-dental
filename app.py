@@ -18,20 +18,17 @@ from concurrent.futures import ThreadPoolExecutor
 st.set_page_config(page_title="Monitor Dental Curva A", page_icon="🦷", layout="wide")
 
 # ==========================================================
-# 🟢 SUA CURVA A (COLOQUE SEUS PRODUTOS FIXOS AQUI)
-# Estes produtos NUNCA serão apagados no reboot
+# 🟢 SUA CURVA A (PRODUTOS FIXOS)
 # ==========================================================
 PRODUTOS_FIXOS = [
     {
-        "nome": "Resina Z100 3M - CURVA A",
+        "nome": "Resina Z100 3M - A1",
         "vidafarma": "https://dentalvidafarma.com.br/resina-z100-3m-solventum",
         "cremer": "https://www.dentalcremer.com.br/resina-z100tm-3m-solventum-dc10933.html",
         "speed": "https://www.dentalspeed.com/resina-z100-3m-solventum-3369.html",
         "surya": "https://www.suryadental.com.br/resina-z100-4g-3m.html"
-    },
-    # Para adicionar mais, basta copiar o bloco acima e colar aqui embaixo:
+    }
 ]
-# ==========================================================
 
 DB_FILE = "produtos_extras.json"
 HIST_FILE = "historico.json"
@@ -50,13 +47,12 @@ def capturar_loja(tarefa):
     url = tarefa['url']
     seletor = tarefa['seletor']
     loja = tarefa['loja']
-    if not url or url == "" or url == "N/A": return {"loja": loja, "valor": "N/A"}
+    if not url or url == "": return {"loja": loja, "valor": "N/A", "url": ""}
     
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1280,720")
     prefs = {"profile.managed_default_content_settings.images": 2}
     opts.add_experimental_option("prefs", prefs)
@@ -70,13 +66,9 @@ def capturar_loja(tarefa):
     try:
         driver.get(url)
         tempo_espera = 20 if "surya" in url.lower() else 15
-        
-        # Seletor inteligente para Surya
         css = "p[class*='priceProduct-productPrice']" if "surya" in url.lower() else seletor
-
         WebDriverWait(driver, tempo_espera).until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
         time.sleep(3)
-        
         elementos = driver.find_elements(By.CSS_SELECTOR, css)
         precos = []
         for el in elementos:
@@ -92,53 +84,41 @@ def capturar_loja(tarefa):
             esg = any(t in html for t in ['esgotado', 'indisponível', 'avise', 'fora de estoque'])
             est = "❌" if esg else "✅"
             
-        return {"loja": loja, "valor": f"R$ {p_final:,.2f} {est}".replace('.',',')}
+        return {"loja": loja, "valor": f"R$ {p_final:,.2f} {est}".replace('.',','), "url": url}
     except:
-        return {"loja": loja, "valor": "Erro ❌"}
+        return {"loja": loja, "valor": "Erro ❌", "url": url}
     finally:
         driver.quit()
 
 # --- INTERFACE ---
-aba_dash, aba_config = st.tabs(["📊 Painel de Controle", "⚙️ Gerenciar Extras"])
+aba_dash, aba_config = st.tabs(["📊 Dashboard de Conferência", "⚙️ Gerenciar Extras"])
 
 with aba_config:
-    st.subheader("Produtos Extras (Temporários)")
-    st.info("A Curva A já está fixa no sistema. Use este campo para testes ou promoções rápidas.")
+    st.subheader("Produtos Extras")
     with st.form("add_form", clear_on_submit=True):
-        nome = st.text_input("Nome do Produto Extra")
+        nome = st.text_input("Nome do Produto")
         c1, c2 = st.columns(2)
-        v = c1.text_input("Link Vidafarma")
-        cr = c2.text_input("Link Cremer")
-        sp = c1.text_input("Link Speed")
-        sy = c2.text_input("Link Surya")
+        v, cr = c1.text_input("Link Vida"), c2.text_input("Link Cremer")
+        sp, sy = c1.text_input("Link Speed"), c2.text_input("Link Surya")
         if st.form_submit_button("Adicionar"):
             if nome and v:
-                extras = carregar_json(DB_FILE)
-                extras.append({"nome": nome, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
-                salvar_json(DB_FILE, extras)
-                st.rerun()
+                ex = carregar_json(DB_FILE); ex.append({"nome": nome, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
+                salvar_json(DB_FILE, ex); st.rerun()
     
-    extras = carregar_json(DB_FILE)
-    for i, p in enumerate(extras):
+    for i, p in enumerate(carregar_json(DB_FILE)):
         col1, col2 = st.columns([5,1])
         col1.write(f"📦 {p['nome']}")
         if col2.button("Remover", key=f"del_{i}"):
-            extras.pop(i)
-            salvar_json(DB_FILE, extras)
-            st.rerun()
+            ex = carregar_json(DB_FILE); ex.pop(i); salvar_json(DB_FILE, ex); st.rerun()
 
 with aba_dash:
-    historico = carregar_json(HIST_FILE)
+    hist = carregar_json(HIST_FILE)
     
-    if st.button("🚀 ATUALIZAR TODOS OS PREÇOS"):
-        # Combina Curva A fixa com os Extras do JSON
-        todos_produtos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
-        
-        if not todos_produtos:
-            st.error("Nenhum produto encontrado!")
-        else:
+    if st.button("🚀 ATUALIZAR TUDO"):
+        todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
+        if todos:
             tarefas = []
-            for p in todos_produtos:
+            for p in todos:
                 tarefas.append({"id": p['nome'], "loja": "Vidafarma", "url": p['vidafarma'], "seletor": ".customProduct__price"})
                 tarefas.append({"id": p['nome'], "loja": "Cremer", "url": p['cremer'], "seletor": ".price"})
                 tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
@@ -146,20 +126,20 @@ with aba_dash:
 
             with st.status("Varredura em andamento...", expanded=True):
                 with ThreadPoolExecutor(max_workers=4) as executor:
-                    res_brutos = list(executor.map(capturar_loja, tarefas))
+                    brutos = list(executor.map(capturar_loja, tarefas))
                 
                 matriz = {}
                 for i, t in enumerate(tarefas):
-                    p_id = t['id']
-                    if p_id not in matriz: matriz[p_id] = {"Produto": p_id}
-                    matriz[p_id][t['loja']] = res_brutos[i]['valor']
+                    pid = t['id']
+                    if pid not in matriz: matriz[pid] = {"Produto": pid}
+                    matriz[pid][t['loja']] = brutos[i]['valor']
+                    matriz[pid][f"🔗 {t['loja']}"] = brutos[i]['url'] # Salva o Link
                 
-                final_dados = list(matriz.values())
-                salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": final_dados}])
+                salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(matriz.values())}])
                 st.rerun()
 
-    if historico:
-        df = pd.DataFrame(historico[0]['dados'])
+    if hist:
+        df = pd.DataFrame(hist[0]['dados'])
         
         # --- CÁLCULOS DASHBOARD ---
         def extrair_v(texto):
@@ -177,32 +157,27 @@ with aba_dash:
             if meu_p and concs:
                 if meu_p < min(concs): ganhando += 1
                 elif meu_p > min(concs): perdendo += 1
-
-        p_ganh = (ganhando / total) * 100 if total > 0 else 0
-        p_perd = (perdendo / total) * 100 if total > 0 else 0
-        p_rupt = (ruptura / total) * 100 if total > 0 else 0
-
-        # --- BARRAS DE PERFORMANCE ---
-        def criar_barra(label, percent, cor):
-            st.markdown(f"""
-                <div style="margin-bottom: 15px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                        <span style="font-weight: bold; font-size: 14px;">{label}</span>
-                        <span style="font-weight: bold; font-size: 14px;">{percent:.1f}%</span>
-                    </div>
-                    <div style="background-color: #e0e0e0; border-radius: 10px; width: 100%; height: 18px;">
-                        <div style="background-color: {cor}; width: {percent}%; height: 100%; border-radius: 10px;"></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-        col1, col2, col3 = st.columns(3)
-        with col1: criar_barra("🔥 Ganhando", p_ganh, "#28a745")
-        with col2: criar_barra("⚠️ Perdendo", p_perd, "#dc3545")
-        with col3: criar_barra("📦 Sua Ruptura", p_rupt, "#6c757d")
+        
+        st.subheader("📊 Indicadores")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🔥 Ganhando", f"{(ganhando/total)*100 if total>0 else 0:.1f}%")
+        c2.metric("⚠️ Perdendo", f"{(perdendo/total)*100 if total>0 else 0:.1f}%")
+        c3.metric("📦 Ruptura", f"{(ruptura/total)*100 if total>0 else 0:.1f}%")
 
         st.divider()
-        st.info(f"Relatório de {historico[0]['data']}")
-        st.dataframe(df.set_index("Produto"), use_container_width=True)
+        st.caption(f"Dados de: {hist[0]['data']}")
+        
+        # --- TABELA COM LINKS CLICÁVEIS ---
+        # Configuramos as colunas que começam com "🔗" para serem links
+        st.dataframe(
+            df.set_index("Produto"),
+            use_container_width=True,
+            column_config={
+                "🔗 Vidafarma": st.column_config.LinkColumn("🔗 Vida", display_text="Abrir"),
+                "🔗 Cremer": st.column_config.LinkColumn("🔗 Cremer", display_text="Abrir"),
+                "🔗 Speed": st.column_config.LinkColumn("🔗 Speed", display_text="Abrir"),
+                "🔗 Surya": st.column_config.LinkColumn("🔗 Surya", display_text="Abrir"),
+            }
+        )
     else:
-        st.warning("Clique em 'Atualizar' para ver os preços da Curva A.")
+        st.warning("Clique em 'Atualizar' para começar.")
