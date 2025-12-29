@@ -15,7 +15,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Monitor Dental Curva A", page_icon="🦷", layout="wide")
+st.set_page_config(page_title="Monitor Dental Flash", page_icon="⚡", layout="wide")
 
 # ==========================================================
 # 🟢 SUA CURVA A (PRODUTOS FIXOS)
@@ -44,19 +44,15 @@ def salvar_json(arquivo, dados):
     with open(arquivo, "w") as f: json.dump(dados, f, indent=4)
 
 def capturar_loja(tarefa):
-    url = tarefa['url']
-    seletor = tarefa['seletor']
-    loja = tarefa['loja']
-    if not url or url == "": return {"loja": loja, "valor": "N/A", "url": ""}
+    url, seletor, loja = tarefa['url'], tarefa['seletor'], tarefa['loja']
+    if not url: return {"loja": loja, "valor": "N/A", "url": ""}
     
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1280,720")
-    prefs = {"profile.managed_default_content_settings.images": 2}
-    opts.add_experimental_option("prefs", prefs)
-    opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+    opts.add_experimental_option("prefs", {"profile.managed_default_content_settings.images": 2})
     
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
@@ -65,9 +61,9 @@ def capturar_loja(tarefa):
     
     try:
         driver.get(url)
-        tempo_espera = 20 if "surya" in url.lower() else 15
+        wait_time = 20 if "surya" in url.lower() else 15
         css = "p[class*='priceProduct-productPrice']" if "surya" in url.lower() else seletor
-        WebDriverWait(driver, tempo_espera).until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
+        WebDriverWait(driver, wait_time).until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
         time.sleep(3)
         elementos = driver.find_elements(By.CSS_SELECTOR, css)
         precos = []
@@ -83,7 +79,6 @@ def capturar_loja(tarefa):
         else:
             esg = any(t in html for t in ['esgotado', 'indisponível', 'avise', 'fora de estoque'])
             est = "❌" if esg else "✅"
-            
         return {"loja": loja, "valor": f"R$ {p_final:,.2f} {est}".replace('.',','), "url": url}
     except:
         return {"loja": loja, "valor": "Erro ❌", "url": url}
@@ -94,7 +89,7 @@ def capturar_loja(tarefa):
 aba_dash, aba_config = st.tabs(["📊 Dashboard de Conferência", "⚙️ Gerenciar Extras"])
 
 with aba_config:
-    st.subheader("Produtos Extras")
+    st.subheader("Gerenciar Produtos Extras")
     with st.form("add_form", clear_on_submit=True):
         nome = st.text_input("Nome do Produto")
         c1, c2 = st.columns(2)
@@ -106,16 +101,15 @@ with aba_config:
                 salvar_json(DB_FILE, ex); st.rerun()
     
     for i, p in enumerate(carregar_json(DB_FILE)):
-        col1, col2 = st.columns([5,1])
-        col1.write(f"📦 {p['nome']}")
-        if col2.button("Remover", key=f"del_{i}"):
+        c1, c2 = st.columns([5,1])
+        c1.write(f"📦 {p['nome']}")
+        if c2.button("Remover", key=f"del_{i}"):
             ex = carregar_json(DB_FILE); ex.pop(i); salvar_json(DB_FILE, ex); st.rerun()
 
 with aba_dash:
     hist = carregar_json(HIST_FILE)
     
-    # Botão de atualizar no topo
-    if st.button("🚀 ATUALIZAR PREÇOS AGORA"):
+    if st.button("🚀 ATUALIZAR PREÇOS"):
         todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
         if todos:
             tarefas = []
@@ -125,24 +119,22 @@ with aba_dash:
                 tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
                 tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
 
-            with st.status("Varredura em andamento...", expanded=True):
+            with st.status("Processando...", expanded=True):
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     brutos = list(executor.map(capturar_loja, tarefas))
-                
                 matriz = {}
                 for i, t in enumerate(tarefas):
                     pid = t['id']
                     if pid not in matriz: matriz[pid] = {"Produto": pid}
                     matriz[pid][t['loja']] = brutos[i]['valor']
                     matriz[pid][f"L_{t['loja']}"] = brutos[i]['url']
-                
                 salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(matriz.values())}])
                 st.rerun()
 
     if hist:
         df = pd.DataFrame(hist[0]['dados'])
         
-        # --- CÁLCULOS DOS INDICADORES (BARRAS) ---
+        # --- CÁLCULOS INDICADORES ---
         def extrair_v(texto):
             try:
                 num = re.search(r'R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', str(texto))
@@ -163,128 +155,29 @@ with aba_dash:
         p_perd = (perdendo/total)*100 if total>0 else 0
         p_rupt = (ruptura/total)*100 if total>0 else 0
 
-        # --- EXIBIÇÃO DOS INDICADORES ---
-        st.subheader("📊 Performance de Mercado")
         def criar_barra(label, percent, cor):
-            st.markdown(f"""
-                <div style="margin-bottom: 10px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span style="font-size: 13px; font-weight: bold;">{label}</span>
-                        <span style="font-size: 13px;">{percent:.1f}%</span>
-                    </div>
-                    <div style="background-color: #333; border-radius: 5px; width: 100%; height: 10px;">
-                        <div style="background-color: {cor}; width: {percent}%; height: 100%; border-radius: 5px;"></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            st.markdown(f"""<div style="margin-bottom: 10px;"><div style="display: flex; justify-content: space-between; margin-bottom: 2px;"><span style="font-size: 13px; font-weight: bold;">{label}</span><span style="font-size: 13px;">{percent:.1f}%</span></div><div style="background-color: #333; border-radius: 5px; width: 100%; height: 10px;"><div style="background-color: {cor}; width: {percent}%; height: 100%; border-radius: 5px;"></div></div></div>""", unsafe_allow_html=True)
 
+        st.subheader("📊 Performance")
         c1, c2, c3 = st.columns(3)
         with c1: criar_barra("🟢 Ganhando", p_ganh, "#28a745")
         with c2: criar_barra("🔴 Perdendo", p_perd, "#dc3545")
-        with col3: criar_barra("⚪ Ruptura", p_rupt, "#6c757d")
+        with c3: criar_barra("⚪ Ruptura", p_rupt, "#6c757d") # Corrigido c3 aqui
 
         st.divider()
-        st.caption(f"🕒 Última atualização: {hist[0]['data']}")
-
-        # --- ORGANIZAÇÃO E FORMATAÇÃO DA TABELA ---
-        # Definimos a ordem exata das colunas
+        st.caption(f"🕒 Atualizado em: {hist[0]['data']}")
+        
+        # Reorganizar e configurar tabela limpa
         ordem = ["Produto", "Vidafarma", "L_Vidafarma", "Cremer", "L_Cremer", "Speed", "L_Speed", "Surya", "L_Surya"]
         df = df[ordem]
-
+        
         st.dataframe(
             df.set_index("Produto"),
             use_container_width=True,
             column_config={
-                "Vidafarma": st.column_config.Column("Vidafarma", width="medium"),
-                "Cremer": st.column_config.Column("Cremer", width="medium"),
-                "Speed": st.column_config.Column("Speed", width="medium"),
-                "Surya": st.column_config.Column("Surya", width="medium"),
-                
-                # O SEGREDO ESTÁ AQUI: display_text="🔗" esconde a URL e mostra só o ícone
                 "L_Vidafarma": st.column_config.LinkColumn("", display_text="🔗", width="small"),
                 "L_Cremer": st.column_config.LinkColumn("", display_text="🔗", width="small"),
                 "L_Speed": st.column_config.LinkColumn("", display_text="🔗", width="small"),
                 "L_Surya": st.column_config.LinkColumn("", display_text="🔗", width="small"),
             }
         )
-
-    if hist:
-        df = pd.DataFrame(hist[0]['dados'])
-        
-        # --- REORGANIZAR COLUNAS PARA FICAR PREÇO | LINK ---
-        ordem_colunas = ["Produto", 
-                         "Vidafarma", "L_Vidafarma", 
-                         "Cremer", "L_Cremer", 
-                         "Speed", "L_Speed", 
-                         "Surya", "L_Surya"]
-        df = df[ordem_colunas]
-        
-        # (Código dos cálculos de dashboard omitido aqui para focar na tabela, mas mantenha o seu)
-
-        st.divider()
-        st.caption(f"🕒 Última atualização: {hist[0]['data']}")
-        
-        # --- TABELA ESTILIZADA ---
-        st.dataframe(
-            df.set_index("Produto"),
-            use_container_width=True,
-            column_config={
-                # Colunas de Preço (Configuração padrão)
-                "Vidafarma": st.column_config.Column("Vidafarma", width="medium"),
-                "Cremer": st.column_config.Column("Cremer", width="medium"),
-                "Speed": st.column_config.Column("Speed", width="medium"),
-                "Surya": st.column_config.Column("Surya", width="medium"),
-                
-                # Colunas de Link (Configuradas como ícones pequenos)
-                "L_Vidafarma": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
-                "L_Cremer": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
-                "L_Speed": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
-                "L_Surya": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
-            }
-        )
-    else:
-        st.warning("Clique em 'Atualizar' para começar.")
-
-    if hist:
-        df = pd.DataFrame(hist[0]['dados'])
-        
-        # --- CÁLCULOS DASHBOARD ---
-        def extrair_v(texto):
-            try:
-                num = re.search(r'R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', str(texto))
-                return float(num.group(1).replace('.', '').replace(',', '.')) if num else None
-            except: return None
-
-        total = len(df)
-        ganhando, perdendo, ruptura = 0, 0, 0
-        for _, row in df.iterrows():
-            meu_p = extrair_v(row['Vidafarma'])
-            if "❌" in str(row['Vidafarma']): ruptura += 1
-            concs = [extrair_v(row[c]) for c in ['Cremer', 'Speed', 'Surya'] if extrair_v(row[c])]
-            if meu_p and concs:
-                if meu_p < min(concs): ganhando += 1
-                elif meu_p > min(concs): perdendo += 1
-        
-        st.subheader("📊 Indicadores")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("🔥 Ganhando", f"{(ganhando/total)*100 if total>0 else 0:.1f}%")
-        c2.metric("⚠️ Perdendo", f"{(perdendo/total)*100 if total>0 else 0:.1f}%")
-        c3.metric("📦 Ruptura", f"{(ruptura/total)*100 if total>0 else 0:.1f}%")
-
-        st.divider()
-        st.caption(f"Dados de: {hist[0]['data']}")
-        
-        # --- TABELA COM LINKS CLICÁVEIS ---
-        # Configuramos as colunas que começam com "🔗" para serem links
-        st.dataframe(
-            df.set_index("Produto"),
-            use_container_width=True,
-            column_config={
-                "🔗 Vidafarma": st.column_config.LinkColumn("🔗 Vida", display_text="Abrir"),
-                "🔗 Cremer": st.column_config.LinkColumn("🔗 Cremer", display_text="Abrir"),
-                "🔗 Speed": st.column_config.LinkColumn("🔗 Speed", display_text="Abrir"),
-                "🔗 Surya": st.column_config.LinkColumn("🔗 Surya", display_text="Abrir"),
-            }
-        )
-    else:
-        st.warning("Clique em 'Atualizar' para começar.")
