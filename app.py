@@ -11,33 +11,28 @@ import time
 import json
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dental Intelligence SaaS", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dental Intel Pro", page_icon="📈", layout="wide")
 
-# UI PREMIUM SaaS (CSS CUSTOMIZADO)
+# UI SaaS PREMIUM
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0e1117; }
-    
     .kpi-card { background: #161b22; border: 1px solid #30363d; padding: 20px; border-radius: 12px; text-align: center; }
     .product-header { background: #21262d; padding: 12px 20px; border-radius: 8px 8px 0 0; border-left: 5px solid #007BFF; margin-top: 25px; color: #58a6ff; font-weight: 700; font-size: 18px; }
-    
     .shop-card { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; text-align: center; transition: 0.3s; height: 100%; }
     .shop-card:hover { border-color: #007BFF; transform: translateY(-3px); }
-    
     .price-val { font-size: 26px; font-weight: 700; color: #fff; margin: 10px 0; }
-    .shop-label { color: #888; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-    
     .status-badge { font-size: 10px; padding: 3px 10px; border-radius: 20px; color: white; font-weight: 700; }
-    .link-icon { color: #58a6ff; text-decoration: none; font-size: 14px; margin-top: 10px; display: inline-block; }
 </style>
 """, unsafe_allow_html=True)
 
 HIST_FILE = "monitor_history.json"
 
-# --- CURVA A (FIXA) ---
+# --- PRODUTOS FIXOS (AJUSTE OS LINKS SE NECESSÁRIO) ---
 PRODUTOS_FIXOS = [
     {
         "nome": "Resina Z100 3M - A1",
@@ -55,83 +50,96 @@ PRODUTOS_FIXOS = [
     }
 ]
 
-# --- MOTOR DE NAVEGAÇÃO ---
+# --- MOTOR DE NAVEGAÇÃO TURBO ---
 def get_driver():
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1280,720")
+    # Desabilita imagens e anúncios para carregar 3x mais rápido
+    prefs = {"profile.managed_default_content_settings.images": 2}
+    options.add_experimental_option("prefs", prefs)
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
     
-    # Caminho específico para o Chromium no Streamlit Cloud
-    options.binary_location = "/usr/bin/chromium"
-    service = Service("/usr/bin/chromedriver")
-    
-    return webdriver.Chrome(service=service, options=options)
+    if os.path.exists("/usr/bin/chromium"):
+        options.binary_location = "/usr/bin/chromium"
+        return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+    return webdriver.Chrome(options=options)
 
-def capturar_loja(url, loja_nome):
-    if not url: return {"preco": 0.0, "estoque": "N/A", "url": ""}
+def capturar_loja(tarefa):
+    url, loja_nome = tarefa['url'], tarefa['loja']
+    if not url: return {loja_nome: {"preco": 0.0, "estoque": "N/A", "url": ""}}
+    
     driver = None
     try:
         driver = get_driver()
         driver.get(url)
         
-        # Seletores Inteligentes
+        # Seletores
         if "vidafarma" in url: s = ".customProduct__price"
         elif "surya" in url: s = "p[class*='priceProduct-productPrice']"
         elif "speed" in url: s = "[data-price-type='finalPrice']"
         else: s = ".price"
 
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.CSS_SELECTOR, s)))
-        time.sleep(5)
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CSS_SELECTOR, s)))
+        time.sleep(2) # Tempo reduzido para performance
         
         texto = driver.find_element(By.CSS_SELECTOR, s).text.replace('\xa0', ' ')
         nums = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
         valores = [float(n.replace('.', '').replace(',', '.')) for n in nums]
         
-        # LÓGICA VIDAFARMA: Pega o maior valor (Total) e ignora parcelas
-        if "vidafarma" in url:
-            preco = max(valores) if valores else 0.0
-        else:
-            preco = min(valores) if valores else 0.0
-        
+        preco = max(valores) if "vidafarma" in url else min(valores)
         html = driver.page_source.lower()
-        estoque = "✅ DISPONÍVEL" if "adicionar" in html or "comprar" in html else "❌ ESGOTADO"
+        estoque = "✅ DISPONÍVEL" if any(x in html for x in ['comprar', 'adicionar']) else "❌ ESGOTADO"
         
-        return {"preco": preco, "estoque": estoque, "url": url}
-    except Exception as e:
-        return {"preco": 0.0, "estoque": "ERRO", "url": url}
+        return {loja_nome: {"preco": preco, "estoque": estoque, "url": url}}
+    except:
+        return {loja_nome: {"preco": 0.0, "estoque": "ERRO", "url": url}}
     finally:
         if driver: driver.quit()
 
+def processar_produto_completo(p_config):
+    # Cria uma lista de tarefas para as 4 lojas do mesmo produto
+    tarefas = [
+        {"url": p_config['vidafarma'], "loja": "Vidafarma"},
+        {"url": p_config['cremer'], "loja": "Cremer"},
+        {"url": p_config['speed'], "loja": "Speed"},
+        {"url": p_config['surya'], "loja": "Surya"}
+    ]
+    
+    # Roda as 4 lojas em paralelo
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        resultados_lista = list(executor.map(capturar_loja, tarefas))
+    
+    # Une os resultados
+    lojas_final = {}
+    for r in resultados_lista:
+        lojas_final.update(r)
+    
+    return {"nome": p_config['nome'], "lojas": lojas_final}
+
 # --- INTERFACE ---
-aba_dash, aba_config = st.tabs(["📊 Dashboard de Performance", "⚙️ Configurações"])
+aba_dash, aba_config = st.tabs(["📊 Monitoramento", "⚙️ Configurações"])
 
 with aba_dash:
-    col_t, col_b = st.columns([3, 1])
-    with col_t: st.write("## 🏛️ Central de Inteligência de Mercado")
-    
-    if col_b.button("🔄 SINCRONIZAR", use_container_width=True):
-        resultados = []
-        for p in PRODUTOS_FIXOS:
-            with st.spinner(f"Analisando {p['nome']}..."):
-                res_lojas = {
-                    "Vidafarma": capturar_loja(p['vidafarma'], "vidafarma"),
-                    "Cremer": capturar_loja(p['cremer'], "cremer"),
-                    "Speed": capturar_loja(p['speed'], "speed"),
-                    "Surya": capturar_loja(p['surya'], "surya")
-                }
-                resultados.append({"nome": p['nome'], "lojas": res_lojas})
-        
-        hist_data = {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "produtos": resultados}
-        with open(HIST_FILE, "w") as f: json.dump(hist_data, f)
+    if st.button("🚀 SINCRONIZAR PREÇOS AGORA (TURBO)", use_container_width=True):
+        with st.status("Robôs trabalhando em paralelo...", expanded=True) as status:
+            resultados = []
+            for p in PRODUTOS_FIXOS:
+                st.write(f"Analisando: {p['nome']}")
+                resultados.append(processar_produto_completo(p))
+            
+            hist_data = {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "produtos": resultados}
+            with open(HIST_FILE, "w") as f: json.dump(hist_data, f)
+            status.update(label="Sincronização Concluída!", state="complete")
         st.rerun()
 
     if os.path.exists(HIST_FILE):
         with open(HIST_FILE, "r") as f: hist = json.load(f)
         
-        # --- CÁLCULOS KPI ---
+        # --- KPIs ---
         ganhando, empatados, perdendo, ruptura = 0, 0, 0, 0
         for p in hist['produtos']:
             meu = p['lojas']['Vidafarma']['preco']
@@ -143,33 +151,31 @@ with aba_dash:
                 elif abs(meu - menor_con) < 0.1: empatados += 1
                 else: perdendo += 1
 
-        total = len(hist['produtos'])
-        st.write("### 📈 Visão Geral da Conta")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.markdown(f'<div class="kpi-card" style="border-left-color:#28a745"><div style="color:#888;font-size:11px">GANHANDO</div><div style="font-size:26px;font-weight:700">{ganhando}</div></div>', unsafe_allow_html=True)
-        c2.markdown(f'<div class="kpi-card" style="border-left-color:#ffc107"><div style="color:#888;font-size:11px">EMPATADOS</div><div style="font-size:26px;font-weight:700">{empatados}</div></div>', unsafe_allow_html=True)
-        c3.markdown(f'<div class="kpi-card" style="border-left-color:#dc3545"><div style="color:#888;font-size:11px">PERDENDO</div><div style="font-size:26px;font-weight:700">{perdendo}</div></div>', unsafe_allow_html=True)
-        c4.markdown(f'<div class="kpi-card" style="border-left-color:#6c757d"><div style="color:#888;font-size:11px">RUPTURA</div><div style="font-size:26px;font-weight:700">{ruptura}</div></div>', unsafe_allow_html=True)
-        
-        st.caption(f"Sincronizado em: {hist['data']}")
+        st.write("### 📈 Visão Geral de Performance")
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("🟢 Ganhando", ganhando)
+        k2.metric("🤝 Empatados", empatados)
+        k3.metric("🔴 Perdendo", perdendo)
+        k4.metric("⚪ Sua Ruptura", ruptura)
         st.divider()
 
         # --- CARDS DE PRODUTO ---
         for p in hist['produtos']:
             st.markdown(f'<div class="product-header">{p["nome"]}</div>', unsafe_allow_html=True)
             cols = st.columns(4)
-            for i, (loja, info) in enumerate(p['lojas'].items()):
+            for i, loja_nome in enumerate(["Vidafarma", "Cremer", "Speed", "Surya"]):
+                info = p['lojas'][loja_nome]
                 with cols[i]:
-                    cor_top = "#007BFF" if loja == "Vidafarma" else "#333"
+                    cor_top = "#007BFF" if loja_nome == "Vidafarma" else "#333"
                     preco_f = f"R$ {info['preco']:,.2f}".replace('.',',') if info['preco'] > 0 else "---"
                     badge_bg = "#238636" if "✅" in info['estoque'] else "#da3633"
                     if info['estoque'] == "ERRO": badge_bg = "#555"
                     
                     st.markdown(f"""
                     <div class="shop-card" style="border-top: 4px solid {cor_top};">
-                        <div class="shop-label">{loja}</div>
+                        <div style="color:#888; font-size:11px; font-weight:600;">{loja_nome}</div>
                         <div class="price-val">{preco_f}</div>
                         <div style="margin-top:10px;"><span class="status-badge" style="background:{badge_bg}">{info['estoque']}</span></div>
-                        <a href="{info['url']}" target="_blank" class="link-icon">Acessar Loja ↗️</a>
+                        <div style="margin-top:12px;"><a href="{info['url']}" target="_blank" style="color:#58a6ff; font-size:12px; text-decoration:none;">Conferir Loja ↗️</a></div>
                     </div>
                     """, unsafe_allow_html=True)
