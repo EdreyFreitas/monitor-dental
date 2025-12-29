@@ -15,53 +15,72 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dental Intelligence v2.0", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dental Intelligence SaaS", page_icon="📈", layout="wide")
 
-# CSS CUSTOMIZADO PARA VISUAL SaaS
+# CSS CUSTOMIZADO PARA DESIGN SaaS PROFISSIONAL
 st.markdown("""
 <style>
-    .product-card {
-        background-color: #1E1E1E;
-        border-radius: 15px;
-        padding: 20px;
-        margin-bottom: 25px;
-        border: 1px solid #333;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
     }
-    .shop-box {
-        background-color: #2D2D2D;
-        border-radius: 10px;
+
+    .kpi-card {
+        background: #1E1E1E;
+        padding: 20px;
+        border-radius: 12px;
+        border-left: 5px solid #007BFF;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.2);
+    }
+
+    .product-card {
+        background: #181818;
+        border-radius: 16px;
+        padding: 25px;
+        margin-bottom: 20px;
+        border: 1px solid #333;
+    }
+
+    .shop-tile {
+        background: #252525;
+        border-radius: 12px;
         padding: 15px;
         text-align: center;
         border: 1px solid #444;
+        transition: transform 0.2s;
     }
-    .price-text {
-        font-size: 20px;
-        font-weight: bold;
+    
+    .shop-tile:hover {
+        transform: translateY(-5px);
+        border-color: #007BFF;
+    }
+
+    .price-val {
+        font-size: 22px;
+        font-weight: 800;
         color: #FFFFFF;
+        display: block;
         margin: 5px 0;
     }
-    .shop-name {
-        font-size: 12px;
-        color: #AAAAAA;
+
+    .shop-label {
+        color: #888;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 1px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
     }
-    .status-badge {
-        padding: 4px 10px;
-        border-radius: 5px;
-        font-size: 12px;
-        font-weight: bold;
-    }
-    .link-btn {
-        text-decoration: none;
+
+    .link-icon {
         color: #007BFF;
+        text-decoration: none;
         font-size: 18px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- PRODUTOS FIXOS ---
+# --- PRODUTOS FIXOS (CURVA A) ---
 PRODUTOS_FIXOS = [
     {
         "nome": "Resina Z100 3M - A1",
@@ -96,6 +115,7 @@ def capturar_loja(tarefa):
     url, seletor, loja = tarefa['url'], tarefa['seletor'], tarefa['loja']
     if not url: return {"loja": loja, "valor": 0.0, "estoque": "❌", "url": ""}
     
+    driver = None # Inicializa como nulo para evitar erro no finally
     opts = Options()
     opts.add_argument("--headless")
     opts.add_argument("--no-sandbox")
@@ -106,20 +126,23 @@ def capturar_loja(tarefa):
     try:
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
         driver.get(url)
-        wait_time = 20 if "surya" in url.lower() else 15
-        css = "p[class*='priceProduct-productPrice']" if "surya" in url.lower() else seletor
-        WebDriverWait(driver, wait_time).until(EC.presence_of_element_located((By.CSS_SELECTOR, css)))
-        time.sleep(3)
+        wait_time = 25 if "surya" in url.lower() else 15
         
-        elemento = driver.find_element(By.CSS_SELECTOR, css)
+        # Seletor inteligente para Surya
+        seletor_css = "p[class*='priceProduct-productPrice']" if "surya" in url.lower() else seletor
+        
+        WebDriverWait(driver, wait_time).until(EC.presence_of_element_located((By.CSS_SELECTOR, seletor_css)))
+        time.sleep(4)
+        
+        elemento = driver.find_element(By.CSS_SELECTOR, seletor_css)
         texto = elemento.text.replace('\xa0', ' ').replace('\n', ' ')
         
-        # Filtro de Preço Melhorado (Evitar parcelas)
+        # Captura de valores numéricos
         matches = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
         precos = [float(m.replace('.', '').replace(',', '.')) for m in matches]
         
         if "vidafarma" in url.lower():
-            # Na Vidafarma, o preço total é SEMPRE o maior (para ignorar o "2x de...")
+            # Na Vidafarma, pegamos o MAIOR valor para ignorar parcelas (ex: 224,90 vs 112,45)
             preco_final = max(precos) if precos else 0.0
         else:
             preco_final = min(precos) if precos else 0.0
@@ -133,21 +156,24 @@ def capturar_loja(tarefa):
             
         return {"loja": loja, "valor": preco_final, "estoque": est, "url": url}
     except:
-        return {"loja": loja, "valor": 0.0, "estoque": "❌", "url": url}
+        return {"loja": loja, "valor": 0.0, "estoque": "Erro", "url": url}
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
 # --- INTERFACE ---
-aba_dash, aba_config = st.tabs(["📊 Dashboard Real-time", "⚙️ Configurações"])
+aba_dash, aba_config = st.tabs(["📊 Market Insights", "⚙️ Configuração"])
 
 with aba_config:
-    st.subheader("Gerenciar Produtos Extras")
-    with st.form("add_form", clear_on_submit=True):
+    st.subheader("Cadastro de Produtos Extras")
+    with st.form("form_add", clear_on_submit=True):
         nome = st.text_input("Nome do Produto")
         c1, c2 = st.columns(2)
-        v, cr = c1.text_input("Link Vida"), c2.text_input("Link Cremer")
-        sp, sy = c1.text_input("Link Speed"), c2.text_input("Link Surya")
-        if st.form_submit_button("Adicionar"):
+        v = c1.text_input("Link Vidafarma")
+        cr = c2.text_input("Link Cremer")
+        sp = c1.text_input("Link Speed")
+        sy = c2.text_input("Link Surya")
+        if st.form_submit_button("Salvar"):
             if nome and v:
                 ex = carregar_json(DB_FILE); ex.append({"nome": nome, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
                 salvar_json(DB_FILE, ex); st.rerun()
@@ -155,7 +181,8 @@ with aba_config:
 with aba_dash:
     hist = carregar_json(HIST_FILE)
     
-    if st.button("🚀 SINCRONIZAR TODOS OS PREÇOS"):
+    col_bt1, col_bt2 = st.columns([3, 1])
+    if col_bt1.button("🔄 ATUALIZAR PREÇOS AGORA", use_container_width=True):
         todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
         tarefas = []
         for p in todos:
@@ -164,17 +191,17 @@ with aba_dash:
             tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
             tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
 
-        with st.status("Varrendo mercado...", expanded=True):
+        with st.status("Robôs analisando o mercado...", expanded=True):
             with ThreadPoolExecutor(max_workers=4) as executor:
                 brutos = list(executor.map(capturar_loja, tarefas))
             
-            res_organizado = {}
+            res_org = {}
             for i, t in enumerate(tarefas):
                 pid = t['id']
-                if pid not in res_organizado: res_organizado[pid] = {"Produto": pid, "lojas": {}}
-                res_organizado[pid]["lojas"][t['loja']] = brutos[i]
+                if pid not in res_org: res_org[pid] = {"Produto": pid, "lojas": {}}
+                res_org[pid]["lojas"][t['loja']] = brutos[i]
             
-            salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(res_organizado.values())}])
+            salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(res_org.values())}])
             st.rerun()
 
     if hist:
@@ -183,49 +210,43 @@ with aba_dash:
         ganhando, perdendo, empatados, ruptura = 0, 0, 0, 0
         
         for p in dados:
-            v_data = p['lojas']['Vidafarma']
-            meu_p = v_data['valor']
-            if v_data['estoque'] == "❌": ruptura += 1
+            meu_v = p['lojas']['Vidafarma']['valor']
+            if p['lojas']['Vidafarma']['estoque'] == "❌": ruptura += 1
             
             outros = [v['valor'] for k, v in p['lojas'].items() if k != 'Vidafarma' and v['valor'] > 0]
-            if meu_p > 0 and outros:
+            if meu_v > 0 and outros:
                 menor_conc = min(outros)
-                if meu_p < menor_conc: ganhando += 1
-                elif meu_p == menor_conc: empatados += 1
+                if meu_v < menor_conc: ganhando += 1
+                elif meu_v == menor_conc: empatados += 1
                 else: perdendo += 1
 
         total = len(dados)
-        st.subheader("🎯 Performance de Precificação")
+        st.write("### 📈 Visão Geral de Performance")
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("🟢 Ganhando", f"{(ganhando/total)*100:.1f}%")
         k2.metric("🤝 Empatados", f"{(empatados/total)*100:.1f}%")
         k3.metric("🔴 Perdendo", f"{(perdendo/total)*100:.1f}%")
-        k4.metric("⚪ Ruptura", f"{(ruptura/total)*100:.1f}%")
+        k4.metric("⚪ Sua Ruptura", f"{(ruptura/total)*100:.1f}%")
         st.divider()
 
-        # --- CONSTRUÇÃO DOS CARDS ---
+        # --- CARDS SaaS ---
         for p in dados:
-            with st.container():
-                st.markdown(f"### {p['Produto']}")
-                cols = st.columns(4)
-                
-                for i, (loja_nome, info) in enumerate(p['lojas'].items()):
-                    with cols[i]:
-                        # Definir cor do status
-                        cor_borda = "#444"
-                        if loja_nome == "Vidafarma":
-                            cor_borda = "#007BFF"
-                        
-                        preco_display = f"R$ {info['valor']:,.2f}".replace('.',',') if info['valor'] > 0 else "---"
-                        
-                        st.markdown(f"""
-                        <div class="shop-box" style="border-top: 4px solid {cor_borda};">
-                            <div class="shop-name">{loja_nome}</div>
-                            <div class="price-text">{preco_display}</div>
-                            <div style="margin-top:10px;">
-                                <span>{info['estoque']}</span> | 
-                                <a href="{info['url']}" target="_blank" class="link-btn">🔗</a>
-                            </div>
+            st.markdown(f"#### {p['Produto']}")
+            cols = st.columns(4)
+            for i, (loja, info) in enumerate(p['lojas'].items()):
+                with cols[i]:
+                    status_cor = "#007BFF" if loja == "Vidafarma" else "#444"
+                    preco_format = f"R$ {info['valor']:,.2f}".replace('.',',') if info['valor'] > 0 else "---"
+                    
+                    st.markdown(f"""
+                    <div class="shop-tile" style="border-top: 4px solid {status_cor};">
+                        <div class="shop-label">{loja}</div>
+                        <div class="price-val">{preco_format}</div>
+                        <div style="font-size: 13px; margin-top: 10px;">
+                            {info['estoque']} | <a href="{info['url']}" target="_blank" class="link-icon">↗️</a>
                         </div>
-                        """, unsafe_allow_html=True)
-                st.markdown("<br>", unsafe_allow_html=True)
+                    </div>
+                    """, unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+    else:
+        st.warning("Nenhum dado capturado. Clique em atualizar para carregar a Curva A.")
