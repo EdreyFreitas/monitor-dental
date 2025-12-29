@@ -1,25 +1,31 @@
 import streamlit as st
-import asyncio
-from playwright.async_api import async_playwright
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 import re
+import time
 import json
 import os
-import subprocess
 from datetime import datetime
 
-# --- CONFIGURAÇÃO SaaS PREMIUM ---
-st.set_page_config(page_title="Dental Intel Flash", page_icon="⚡", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Dental Intelligence SaaS", page_icon="⚡", layout="wide")
 
-# CSS para Visual SaaS Vendável
+# MANTENDO SUA INTERFACE (CSS SaaS PREMIUM)
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0e1117; }
     .kpi-card { background: #161b22; border: 1px solid #30363d; padding: 20px; border-radius: 12px; text-align: center; border-top: 4px solid #007BFF; }
     .product-header { background: #21262d; padding: 10px 20px; border-radius: 8px 8px 0 0; margin-top: 25px; color: #58a6ff; font-weight: 700; font-size: 18px; border: 1px solid #30363d; }
-    .shop-card { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; text-align: center; transition: 0.2s; height: 100%; border-top: 3px solid #333; }
-    .price-val { font-size: 26px; font-weight: 800; color: #fff; margin: 10px 0; }
+    .shop-card { background: #111; border: 1px solid #333; border-radius: 12px; padding: 20px; text-align: center; transition: 0.3s; height: 100%; border-top: 3px solid #333; }
+    .price-val { font-size: 26px; font-weight: 700; color: #fff; margin: 10px 0; }
+    .status-badge { font-size: 10px; padding: 3px 10px; border-radius: 20px; color: white; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -41,85 +47,86 @@ PRODUTOS_FIXOS = [
     }
 ]
 
-# --- MOTOR ULTRA-FAST (PLAYWRIGHT) ---
-async def scrape_site(context, url, loja):
-    if not url: return {"preco": 0.0, "estoque": "Sem URL", "url": ""}
-    page = await context.new_page()
+# --- MOTOR SaaS ULTRA-FAST ---
+def get_optimized_driver():
+    opts = Options()
+    opts.add_argument("--headless")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1920,1080")
     
-    # ACELERAÇÃO SaaS: Bloqueia imagens, fontes e analytics
-    await page.route("**/*.{png,jpg,jpeg,gif,webp,svg,woff,ttf,css}", lambda route: route.abort())
+    # ACELERAÇÃO MÁXIMA: Ignora imagens, css e fontes
+    opts.page_load_strategy = 'eager' 
+    prefs = {"profile.managed_default_content_settings.images": 2, "profile.default_content_setting_values.notifications": 2}
+    opts.add_experimental_option("prefs", prefs)
+    opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
     
+    if os.path.exists("/usr/bin/chromium"):
+        opts.binary_location = "/usr/bin/chromium"
+        return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=opts)
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
+
+def capturar_dados_saas(driver, url):
+    if not url: return 0.0, "Sem URL"
     try:
-        # Abre o site e espera apenas o "mínimo" para ler o texto
-        await page.goto(url, wait_until="commit", timeout=15000)
-        
-        # Seletores
+        driver.get(url)
+        # Seletores dinâmicos
         if "vidafarma" in url: s = ".customProduct__price"
         elif "surya" in url: s = "p[class*='priceProduct-productPrice']"
         elif "speed" in url: s = "[data-price-type='finalPrice']"
         else: s = ".price"
+
+        # Espera o preço aparecer na tela por no máx 8 segundos
+        WebDriverWait(driver, 8).until(EC.presence_of_element_located((By.CSS_SELECTOR, s)))
         
-        await page.wait_for_selector(s, timeout=8000)
-        texto = await page.inner_text(s)
-        
-        # Lógica de Preço Blindada
+        # Pega todos os valores numéricos daquela área
+        elemento = driver.find_element(By.CSS_SELECTOR, s)
+        texto = elemento.text.replace('\xa0', ' ').replace('\n', ' ')
         nums = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
         valores = [float(n.replace('.', '').replace(',', '.')) for n in nums if float(n.replace('.', '').replace(',', '.')) > 1.0]
-        preco = max(valores) if "vidafarma" in url else min(valores)
         
-        # Estoque Simplificado por Botão
-        content = (await page.content()).lower()
-        estoque = "✅ DISPONÍVEL" if "adicionar" in content or "comprar" in content else "❌ ESGOTADO"
+        # LOGICA ARTICAINA: Na Vidafarma pega o maior (Total), nos outros o menor (Pix)
+        preco = max(valores) if "vidafarma" in url and valores else (min(valores) if valores else 0.0)
         
-        return {"preco": preco, "estoque": estoque, "url": url}
+        # ESTOQUE: Procura botões de ação positiva
+        html = driver.page_source.lower()
+        estoque = "✅ DISPONÍVEL" if "adicionar" in html or "comprar" in html else "❌ ESGOTADO"
+        
+        return preco, estoque
     except:
-        return {"preco": 0.0, "estoque": "ERRO", "url": url}
-    finally:
-        await page.close()
+        return 0.0, "ERRO"
 
-async def run_turbo_sync():
-    # Garante que o Playwright está instalado no servidor
-    subprocess.run(["playwright", "install", "chromium"])
-    
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+# --- SINCRONIZAÇÃO EM CADEIA (REUSANDO O NAVEGADOR) ---
+def sincronizar_tudo():
+    driver = get_optimized_driver()
+    resultados = []
+    try:
+        for p in PRODUTOS_FIXOS:
+            st.write(f"⚡ Sincronizando: {p['nome']}")
+            lojas = {}
+            for loja_nome in ["vidafarma", "cremer", "speed", "surya"]:
+                preco, estoque = capturar_dados_saas(driver, p[loja_nome])
+                lojas[loja_nome.capitalize()] = {"preco": preco, "estoque": estoque, "url": p[loja_nome]}
+            resultados.append({"nome": p['nome'], "lojas": lojas})
         
-        final_results = []
-        for p_item in PRODUTOS_FIXOS:
-            # DISPARA TODAS AS LOJAS DO PRODUTO AO MESMO TEMPO (Paralelismo Total)
-            tasks = [
-                scrape_site(context, p_item['vidafarma'], "Vidafarma"),
-                scrape_site(context, p_item['cremer'], "Cremer"),
-                scrape_site(context, p_item['speed'], "Speed"),
-                scrape_site(context, p_item['surya'], "Surya")
-            ]
-            res_lojas = await asyncio.gather(*tasks)
-            
-            final_results.append({
-                "nome": p_item['nome'],
-                "lojas": {
-                    "Vidafarma": res_lojas[0], "Cremer": res_lojas[1], 
-                    "Speed": res_lojas[2], "Surya": res_lojas[3]
-                }
-            })
-        await browser.close()
-        return final_results
+        final_data = {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "produtos": resultados}
+        with open(HIST_FILE, "w") as f: json.dump(final_data, f)
+        return final_data
+    finally:
+        driver.quit()
 
-# --- INTERFACE SaaS ---
+# --- INTERFACE ---
 st.title("⚡ Dental Intelligence SaaS")
 
-if st.button("🚀 SINCRONIZAÇÃO FLASH (Sub-10s)", use_container_width=True):
-    with st.spinner("Motor Playwright em alta velocidade..."):
-        results = asyncio.run(run_turbo_sync())
-        hist_data = {"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "produtos": results}
-        with open(HIST_FILE, "w") as f: json.dump(hist_data, f)
-        st.rerun()
+if st.button("🚀 ATUALIZAR PREÇOS AGORA (SUB-10s)", use_container_width=True):
+    hist = sincronizar_tudo()
+    st.rerun()
 
 if os.path.exists(HIST_FILE):
     with open(HIST_FILE, "r") as f: hist = json.load(f)
     
-    # KPIs Rápidos
+    # KPIs
     ganhando, empatados, perdendo, ruptura = 0, 0, 0, 0
     for p in hist['produtos']:
         meu = p['lojas']['Vidafarma']['preco']
@@ -148,11 +155,12 @@ if os.path.exists(HIST_FILE):
                 cor = "#007BFF" if loja == "Vidafarma" else "#333"
                 p_txt = f"R$ {info['preco']:,.2f}".replace('.',',') if info['preco'] > 0 else "---"
                 st_bg = "#238636" if "✅" in info['estoque'] else "#da3633"
+                if info['estoque'] == "ERRO": st_bg = "#555"
                 st.markdown(f"""
                 <div class="shop-card" style="border-top-color: {cor};">
                     <div style="color:#888; font-size:11px; font-weight:600;">{loja.upper()}</div>
                     <div class="price-val">{p_txt}</div>
-                    <div style="margin-top:10px;"><span style="background:{st_bg}; padding:3px 8px; border-radius:10px; font-size:10px; color:white;">{info['estoque']}</span></div>
+                    <div style="margin-top:10px;"><span class="status-badge" style="background:{st_bg}">{info['estoque']}</span></div>
                     <div style="margin-top:12px;"><a href="{info['url']}" target="_blank" style="color:#58a6ff; font-size:12px; text-decoration:none;">Conferir ↗️</a></div>
                 </div>
                 """, unsafe_allow_html=True)
