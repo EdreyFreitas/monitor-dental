@@ -132,11 +132,49 @@ with aba_dash:
                 for i, t in enumerate(tarefas):
                     pid = t['id']
                     if pid not in matriz: matriz[pid] = {"Produto": pid}
+                    # Preço e Link em colunas separadas para formatação
                     matriz[pid][t['loja']] = brutos[i]['valor']
-                    matriz[pid][f"🔗 {t['loja']}"] = brutos[i]['url'] # Salva o Link
+                    matriz[pid][f"L_{t['loja']}"] = brutos[i]['url']
                 
                 salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(matriz.values())}])
                 st.rerun()
+
+    if hist:
+        df = pd.DataFrame(hist[0]['dados'])
+        
+        # --- REORGANIZAR COLUNAS PARA FICAR PREÇO | LINK ---
+        ordem_colunas = ["Produto", 
+                         "Vidafarma", "L_Vidafarma", 
+                         "Cremer", "L_Cremer", 
+                         "Speed", "L_Speed", 
+                         "Surya", "L_Surya"]
+        df = df[ordem_colunas]
+        
+        # (Código dos cálculos de dashboard omitido aqui para focar na tabela, mas mantenha o seu)
+
+        st.divider()
+        st.caption(f"🕒 Última atualização: {hist[0]['data']}")
+        
+        # --- TABELA ESTILIZADA ---
+        st.dataframe(
+            df.set_index("Produto"),
+            use_container_width=True,
+            column_config={
+                # Colunas de Preço (Configuração padrão)
+                "Vidafarma": st.column_config.Column("Vidafarma", width="medium"),
+                "Cremer": st.column_config.Column("Cremer", width="medium"),
+                "Speed": st.column_config.Column("Speed", width="medium"),
+                "Surya": st.column_config.Column("Surya", width="medium"),
+                
+                # Colunas de Link (Configuradas como ícones pequenos)
+                "L_Vidafarma": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
+                "L_Cremer": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
+                "L_Speed": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
+                "L_Surya": st.column_config.LinkColumn("🔗", display_text="↗️", width="small"),
+            }
+        )
+    else:
+        st.warning("Clique em 'Atualizar' para começar.")
 
     if hist:
         df = pd.DataFrame(hist[0]['dados'])
