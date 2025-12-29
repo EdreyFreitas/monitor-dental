@@ -1,2 +1,6 @@
-chromium
-chromium-driver
+libgbm1
+libasound2
+libnss3
+libxss1
+libatk-bridge2.0-0
+libgtk-3-0
