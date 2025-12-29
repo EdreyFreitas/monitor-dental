@@ -114,7 +114,8 @@ with aba_config:
 with aba_dash:
     hist = carregar_json(HIST_FILE)
     
-    if st.button("🚀 ATUALIZAR TUDO"):
+    # Botão de atualizar no topo
+    if st.button("🚀 ATUALIZAR PREÇOS AGORA"):
         todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
         if todos:
             tarefas = []
@@ -132,12 +133,80 @@ with aba_dash:
                 for i, t in enumerate(tarefas):
                     pid = t['id']
                     if pid not in matriz: matriz[pid] = {"Produto": pid}
-                    # Preço e Link em colunas separadas para formatação
                     matriz[pid][t['loja']] = brutos[i]['valor']
                     matriz[pid][f"L_{t['loja']}"] = brutos[i]['url']
                 
                 salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(matriz.values())}])
                 st.rerun()
+
+    if hist:
+        df = pd.DataFrame(hist[0]['dados'])
+        
+        # --- CÁLCULOS DOS INDICADORES (BARRAS) ---
+        def extrair_v(texto):
+            try:
+                num = re.search(r'R\$\s?(\d{1,3}(?:\.\d{3})*,\d{2})', str(texto))
+                return float(num.group(1).replace('.', '').replace(',', '.')) if num else None
+            except: return None
+
+        total = len(df)
+        ganhando, perdendo, ruptura = 0, 0, 0
+        for _, row in df.iterrows():
+            meu_p = extrair_v(row['Vidafarma'])
+            if "❌" in str(row['Vidafarma']): ruptura += 1
+            concs = [extrair_v(row[c]) for c in ['Cremer', 'Speed', 'Surya'] if extrair_v(row[c])]
+            if meu_p and concs:
+                if meu_p < min(concs): ganhando += 1
+                elif meu_p > min(concs): perdendo += 1
+        
+        p_ganh = (ganhando/total)*100 if total>0 else 0
+        p_perd = (perdendo/total)*100 if total>0 else 0
+        p_rupt = (ruptura/total)*100 if total>0 else 0
+
+        # --- EXIBIÇÃO DOS INDICADORES ---
+        st.subheader("📊 Performance de Mercado")
+        def criar_barra(label, percent, cor):
+            st.markdown(f"""
+                <div style="margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                        <span style="font-size: 13px; font-weight: bold;">{label}</span>
+                        <span style="font-size: 13px;">{percent:.1f}%</span>
+                    </div>
+                    <div style="background-color: #333; border-radius: 5px; width: 100%; height: 10px;">
+                        <div style="background-color: {cor}; width: {percent}%; height: 100%; border-radius: 5px;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns(3)
+        with c1: criar_barra("🟢 Ganhando", p_ganh, "#28a745")
+        with c2: criar_barra("🔴 Perdendo", p_perd, "#dc3545")
+        with col3: criar_barra("⚪ Ruptura", p_rupt, "#6c757d")
+
+        st.divider()
+        st.caption(f"🕒 Última atualização: {hist[0]['data']}")
+
+        # --- ORGANIZAÇÃO E FORMATAÇÃO DA TABELA ---
+        # Definimos a ordem exata das colunas
+        ordem = ["Produto", "Vidafarma", "L_Vidafarma", "Cremer", "L_Cremer", "Speed", "L_Speed", "Surya", "L_Surya"]
+        df = df[ordem]
+
+        st.dataframe(
+            df.set_index("Produto"),
+            use_container_width=True,
+            column_config={
+                "Vidafarma": st.column_config.Column("Vidafarma", width="medium"),
+                "Cremer": st.column_config.Column("Cremer", width="medium"),
+                "Speed": st.column_config.Column("Speed", width="medium"),
+                "Surya": st.column_config.Column("Surya", width="medium"),
+                
+                # O SEGREDO ESTÁ AQUI: display_text="🔗" esconde a URL e mostra só o ícone
+                "L_Vidafarma": st.column_config.LinkColumn("", display_text="🔗", width="small"),
+                "L_Cremer": st.column_config.LinkColumn("", display_text="🔗", width="small"),
+                "L_Speed": st.column_config.LinkColumn("", display_text="🔗", width="small"),
+                "L_Surya": st.column_config.LinkColumn("", display_text="🔗", width="small"),
+            }
+        )
 
     if hist:
         df = pd.DataFrame(hist[0]['dados'])
