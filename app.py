@@ -15,52 +15,45 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dental Intelligence SaaS", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Dental Intelligence Pro", page_icon="📈", layout="wide")
 
-# CSS PREMIUM (UI/UX SaaS)
+# UI/UX SaaS CUSTOMIZADA
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; background-color: #0e1117; }
     
     .stButton>button {
-        background: linear-gradient(90deg, #007BFF 0%, #0056b3 100%);
-        color: white; border: none; border-radius: 8px; padding: 0.6rem 2rem;
-        font-weight: 700; width: 100%; transition: 0.3s;
+        background: #007BFF; color: white; border-radius: 8px; font-weight: 700; width: 100%;
     }
     
-    .kpi-container {
-        background: #1e1e1e; padding: 20px; border-radius: 12px;
-        border: 1px solid #333; margin-bottom: 20px;
+    .kpi-box {
+        background: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 10px; text-align: center;
     }
 
-    .product-header {
-        background: #252525; padding: 10px 20px; border-radius: 8px 8px 0 0;
-        border-left: 5px solid #007BFF; margin-top: 20px;
+    .product-section {
+        background: #161b22; padding: 15px; border-radius: 10px 10px 0 0;
+        border-left: 4px solid #007BFF; margin-top: 30px; font-weight: 700;
     }
 
     .shop-card {
-        background: #181818; border: 1px solid #333; border-radius: 12px;
-        padding: 20px; text-align: center; height: 100%;
-        transition: all 0.3s ease;
+        background: #0d1117; border: 1px solid #30363d; border-radius: 12px;
+        padding: 20px; text-align: center; height: 100%; transition: 0.3s;
     }
-    
-    .shop-card:hover { border-color: #007BFF; transform: translateY(-3px); }
+    .shop-card:hover { border-color: #58a6ff; }
 
-    .price-large {
-        font-size: 24px; font-weight: 700; color: #fff; margin: 10px 0;
-    }
-
-    .shop-title { color: #888; font-size: 12px; text-transform: uppercase; font-weight: 600; }
+    .price-tag { font-size: 24px; font-weight: 800; color: #f0f6fc; margin: 10px 0; }
+    .shop-name { color: #8b949e; font-size: 11px; text-transform: uppercase; font-weight: 600; letter-spacing: 1px; }
     
-    .badge {
-        padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700;
-    }
+    .status-ok { color: #3fb950; font-size: 12px; font-weight: 600; }
+    .status-err { color: #f85149; font-size: 12px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- PRODUTOS FIXOS ---
+# --- CONFIGURAÇÃO DE DADOS ---
+DB_FILE = "produtos_extras.json"
+HIST_FILE = "historico.json"
+
 PRODUTOS_FIXOS = [
     {
         "nome": "Resina Z100 3M - A1",
@@ -78,9 +71,6 @@ PRODUTOS_FIXOS = [
     }
 ]
 
-DB_FILE = "produtos_extras.json"
-HIST_FILE = "historico.json"
-
 def carregar_json(arquivo):
     if os.path.exists(arquivo):
         try:
@@ -91,9 +81,10 @@ def carregar_json(arquivo):
 def salvar_json(arquivo, dados):
     with open(arquivo, "w") as f: json.dump(dados, f, indent=4)
 
+# --- MOTOR DE SCRAPING (VERSÃO BLINDADA) ---
 def capturar_loja(tarefa):
     url, seletor, loja = tarefa['url'], tarefa['seletor'], tarefa['loja']
-    if not url or len(url) < 10: return {"loja": loja, "valor": 0.0, "estoque": "N/A", "url": url}
+    if not url or len(url) < 10: return {"loja": loja, "valor": 0.0, "estoque": "Sem Link", "url": url}
     
     driver = None
     opts = Options()
@@ -105,135 +96,118 @@ def capturar_loja(tarefa):
     opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     try:
-        # Inicialização do Driver com tratamento para Streamlit Cloud
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=opts)
+        # Lógica para detectar se está no Streamlit Cloud ou Local
+        if os.path.exists("/usr/bin/chromium-browser"):
+            opts.binary_location = "/usr/bin/chromium-browser"
+            driver = webdriver.Chrome(options=opts)
+        else:
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=opts)
         
         driver.get(url)
-        # Espera extra para sites pesados
-        wait_time = 25 if "surya" in url.lower() else 15
+        wait_time = 20 if "surya" in url.lower() else 15
         target_css = "p[class*='priceProduct-productPrice']" if "surya" in url.lower() else seletor
         
         WebDriverWait(driver, wait_time).until(EC.presence_of_element_located((By.CSS_SELECTOR, target_css)))
-        time.sleep(5) # Delay necessário para carregar preços dinâmicos
+        time.sleep(5) 
         
         elemento = driver.find_element(By.CSS_SELECTOR, target_css)
         texto = elemento.text.replace('\xa0', ' ').replace('\n', ' ')
         
-        # Extração de Preços
         matches = re.findall(r'(\d{1,3}(?:\.\d{3})*,\d{2})', texto)
-        precos = [float(m.replace('.', '').replace(',', '.')) for m in matches]
+        precos = [float(m.replace('.', '').replace(',', '.')) for m in matches if float(m.replace('.', '').replace(',', '.')) > 1.0]
         
-        if not precos: return {"loja": loja, "valor": 0.0, "estoque": "Sem Preço", "url": url}
+        if not precos: return {"loja": loja, "valor": 0.0, "estoque": "Preço oculto", "url": url}
 
-        if "vidafarma" in url.lower():
-            preco_final = max(precos) # Pega o valor cheio (não parcelado)
-        else:
-            preco_final = min(precos) # Pega o valor à vista
+        # Lógica específica Vidafarma: Ignorar parcelas pegando o maior valor
+        preco_final = max(precos) if "vidafarma" in url.lower() else min(precos)
             
         html = driver.page_source.lower()
-        if "vidafarma" in url.lower():
-            est = "✅ Disponível" if "comprar" in html or "adicionar" in html else "❌ Esgotado"
-        else:
-            esg = any(t in html for t in ['esgotado', 'indisponível', 'avise', 'fora de estoque'])
-            est = "❌ Esgotado" if esg else "✅ Disponível"
+        est = "✅ Disponível" if any(x in html for x in ['comprar', 'adicionar', 'estoque']) and not any(y in html for y in ['esgotado', 'indisponível']) else "❌ Esgotado"
             
         return {"loja": loja, "valor": preco_final, "estoque": est, "url": url}
     except Exception as e:
-        return {"loja": loja, "valor": 0.0, "estoque": f"Erro", "url": url}
+        return {"loja": loja, "valor": 0.0, "estoque": "Erro", "url": url}
     finally:
         if driver: driver.quit()
 
 # --- INTERFACE ---
-aba_dash, aba_config = st.tabs(["📊 Market Overview", "⚙️ Configuração"])
+tab_dash, tab_config = st.tabs(["📊 Inteligência de Mercado", "⚙️ Configurações"])
 
-with aba_config:
-    st.subheader("Cadastro de Novos Links")
-    with st.form("form_add", clear_on_submit=True):
-        nome = st.text_input("Nome do Produto")
+with tab_config:
+    st.subheader("Cadastro de Itens Extras")
+    with st.form("form_add"):
+        n = st.text_input("Nome do Produto")
         c1, c2 = st.columns(2)
-        v = c1.text_input("Link Vidafarma")
-        cr = c2.text_input("Link Cremer")
-        sp = c1.text_input("Link Speed")
-        sy = c2.text_input("Link Surya")
-        if st.form_submit_button("Salvar na Base"):
-            if nome and v:
-                ex = carregar_json(DB_FILE); ex.append({"nome": nome, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
-                salvar_json(DB_FILE, ex); st.rerun()
+        v, cr = c1.text_input("Link Vidafarma"), c2.text_input("Link Cremer")
+        sp, sy = c1.text_input("Link Speed"), c2.text_input("Link Surya")
+        if st.form_submit_button("Salvar Produto"):
+            if n and v:
+                l = carregar_json(DB_FILE); l.append({"nome": n, "vidafarma": v, "cremer": cr, "speed": sp, "surya": sy})
+                salvar_json(DB_FILE, l); st.rerun()
 
-with aba_dash:
+with tab_dash:
     hist = carregar_json(HIST_FILE)
     
-    col_head, col_btn = st.columns([3, 1])
-    with col_head:
-        st.write("## 🏛️ Central de Inteligência")
-    with col_btn:
-        if st.button("🔄 ATUALIZAR MERCADO"):
-            todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
-            tarefas = []
-            for p in todos:
-                tarefas.append({"id": p['nome'], "loja": "Vidafarma", "url": p['vidafarma'], "seletor": ".customProduct__price"})
-                tarefas.append({"id": p['nome'], "loja": "Cremer", "url": p['cremer'], "seletor": ".price"})
-                tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
-                tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
+    if st.button("🔄 ATUALIZAR TODOS OS PREÇOS AGORA"):
+        todos = PRODUTOS_FIXOS + carregar_json(DB_FILE)
+        tarefas = []
+        for p in todos:
+            tarefas.append({"id": p['nome'], "loja": "Vidafarma", "url": p['vidafarma'], "seletor": ".customProduct__price"})
+            tarefas.append({"id": p['nome'], "loja": "Cremer", "url": p['cremer'], "seletor": ".price"})
+            tarefas.append({"id": p['nome'], "loja": "Speed", "url": p['speed'], "seletor": "[data-price-type='finalPrice']"})
+            tarefas.append({"id": p['nome'], "loja": "Surya", "url": p['surya'], "seletor": ".priceProduct-productPrice-2XFbc"})
 
-            with st.status("Robôs sincronizando preços...", expanded=True):
-                with ThreadPoolExecutor(max_workers=4) as executor:
-                    brutos = list(executor.map(capturar_loja, tarefas))
-                
-                res_org = {}
-                for i, t in enumerate(tarefas):
-                    pid = t['id']
-                    if pid not in res_org: res_org[pid] = {"Produto": pid, "lojas": {}}
-                    res_org[pid]["lojas"][t['loja']] = brutos[i]
-                
-                salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(res_org.values())}])
-                st.rerun()
+        with st.status("Robôs sincronizando...", expanded=True):
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                brutos = list(executor.map(capturar_loja, tarefas))
+            
+            res = {}
+            for i, t in enumerate(tarefas):
+                pid = t['id']
+                if pid not in res: res[pid] = {"Produto": pid, "lojas": {}}
+                res[pid]["lojas"][t['loja']] = brutos[i]
+            
+            salvar_json(HIST_FILE, [{"data": datetime.now().strftime("%d/%m/%Y %H:%M"), "dados": list(res.values())}])
+            st.rerun()
 
     if hist:
-        # --- CÁLCULOS KPI ---
         dados = hist[0]['dados']
         ganhando, perdendo, empatados, ruptura = 0, 0, 0, 0
         
         for p in dados:
-            meu_v = p['lojas']['Vidafarma']['valor']
+            meu = p['lojas']['Vidafarma']['valor']
             if "❌" in p['lojas']['Vidafarma']['estoque']: ruptura += 1
-            
-            outros = [v['valor'] for k, v in p['lojas'].items() if k != 'Vidafarma' and v['valor'] > 1.0]
-            if meu_v > 1.0 and outros:
-                menor_conc = min(outros)
-                if meu_v < menor_conc: ganhando += 1
-                elif abs(meu_v - menor_conc) < 0.05: empatados += 1
+            concs = [v['valor'] for k, v in p['lojas'].items() if k != 'Vidafarma' and v['valor'] > 1.0]
+            if meu > 1.0 and concs:
+                menor = min(concs)
+                if meu < menor: ganhando += 1
+                elif abs(meu - menor) < 0.1: empatados += 1
                 else: perdendo += 1
 
-        total = len(dados)
-        st.markdown(f"#### 📊 Performance Geral (Base: {total} produtos)")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("🟢 Ganhando", f"{(ganhando/total)*100:.1f}%")
-        k2.metric("🤝 Empatados", f"{(empatados/total)*100:.1f}%")
-        k3.metric("🔴 Perdendo", f"{(perdendo/total)*100:.1f}%")
-        k4.metric("⚪ Sua Ruptura", f"{(ruptura/total)*100:.1f}%")
+        st.write("### 📈 Performance da Vitrine")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🟢 Ganhando", f"{(ganhando/len(dados))*100:.1f}%")
+        c2.metric("🤝 Empatados", f"{(empatados/len(dados))*100:.1f}%")
+        c3.metric("🔴 Perdendo", f"{(perdendo/len(dados))*100:.1f}%")
+        c4.metric("⚪ Sua Ruptura", f"{(ruptura/len(dados))*100:.1f}%")
         st.caption(f"Última atualização: {hist[0]['data']}")
         st.divider()
 
-        # --- CARDS SaaS ---
         for p in dados:
-            st.markdown(f'<div class="product-header">{p["Produto"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="product-section">{p["Produto"]}</div>', unsafe_allow_html=True)
             cols = st.columns(4)
             for i, (loja, info) in enumerate(p['lojas'].items()):
                 with cols[i]:
-                    cor_borda = "#007BFF" if loja == "Vidafarma" else "#333"
-                    preco_f = f"R$ {info['valor']:,.2f}".replace('.',',') if info['valor'] > 0 else "---"
-                    status_cor = "green" if "✅" in info['estoque'] else "red"
+                    cor = "#007BFF" if loja == "Vidafarma" else "#30363d"
+                    p_format = f"R$ {info['valor']:,.2f}".replace('.',',') if info['valor'] > 0 else "---"
+                    status_cl = "status-ok" if "✅" in info['estoque'] else "status-err"
                     
                     st.markdown(f"""
-                    <div class="shop-card" style="border-top: 4px solid {cor_borda};">
-                        <div class="shop-title">{loja}</div>
-                        <div class="price-large">{preco_f}</div>
-                        <div style="margin: 10px 0;">
-                            <span class="badge" style="background: {status_cor}; color: white;">{info['estoque']}</span>
-                        </div>
-                        <a href="{info['url']}" target="_blank" style="text-decoration:none; font-size:14px;">Acessar Link ↗️</a>
+                    <div class="shop-card" style="border-top: 3px solid {cor};">
+                        <div class="shop-name">{loja}</div>
+                        <div class="price-tag">{p_format}</div>
+                        <div class="{status_cl}">{info['estoque']}</div>
+                        <div style="margin-top:10px;"><a href="{info['url']}" target="_blank" style="text-decoration:none; color:#58a6ff; font-size:12px;">Ver no Site ↗️</a></div>
                     </div>
                     """, unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
